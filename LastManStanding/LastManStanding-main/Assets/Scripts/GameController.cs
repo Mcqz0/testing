@@ -20,7 +20,7 @@ public class GameController : MonoBehaviour
     private void Start()
     {
         Time.timeScale = 1;
-        _tutorialManager = FindFirstObjectByType<TutorialManager>(); // Updated API
+        _tutorialManager = FindObjectOfType<TutorialManager>();
 
         _gameTimer.TimeLeftChanged += OnTimeLeftChanged;
         _exitZone.ExitZoneReached += Win;

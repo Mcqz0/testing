@@ -22,7 +22,7 @@ public class Zombie : LivingEntity
     {
         base.Start();
         _aiPath = GetComponent<AIPath>();
-        _tutorialManager = FindFirstObjectByType<TutorialManager>();
+        _tutorialManager = FindObjectOfType<TutorialManager>();
 
         var playerObj = GameObject.FindGameObjectWithTag("Player");
         if (playerObj != null)

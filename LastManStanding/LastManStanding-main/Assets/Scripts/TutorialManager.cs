@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
+using UnityEngine.UI;
 
 public class TutorialManager : MonoBehaviour
 {
@@ -31,15 +32,26 @@ public class TutorialManager : MonoBehaviour
     [SerializeField] private GameObject _tutorialPanel;
     [SerializeField] private TextMeshProUGUI _tutorialText;
     [SerializeField] private GameObject _skipButton;
+    [SerializeField] private Button _skipButtonComponent;
 
     [Header("Game References")]
     [SerializeField] private Player _player;
     [SerializeField] private GameTimer _gameTimer;
 
+    [Header("Tutorial Movement Limits")]
+    [SerializeField] private float _tutorialMoveDistance = 0.5f; // How far the player moves per key press
+    [SerializeField] private float _tutorialMoveTime = 0.3f; // Duration of each movement
+
     private int _currentStepIndex = 0;
     private bool _tutorialActive = false;
     private bool _waitingForInput = false;
     private Coroutine _timeoutCoroutine;
+    private Vector3 _playerStartPosition;
+    private bool _hasMovedThisStep = false;
+    private bool _hasFiredThisStep = false;
+    private Coroutine _limitedMoveCoroutine;
+    private bool _isMovementStep = false;  // Track if we're in movement step
+    private bool _isShootingStep = false;  // Track if we're in shooting step
 
     // Events
     public System.Action OnTutorialComplete;
@@ -47,6 +59,13 @@ public class TutorialManager : MonoBehaviour
     private void Start()
     {
         InitializeTutorialSteps();
+        SetupSkipButton();
+
+        // Find references if not set in inspector
+        if (_player == null)
+            _player = FindObjectOfType<Player>();
+        if (_gameTimer == null)
+            _gameTimer = FindObjectOfType<GameTimer>();
 
         if (_skipTutorial)
         {
@@ -55,6 +74,39 @@ public class TutorialManager : MonoBehaviour
         }
 
         StartTutorial();
+    }
+
+    private void SetupSkipButton()
+    {
+        // Position skip button at top-middle of the screen
+        if (_skipButton != null)
+        {
+            RectTransform skipRect = _skipButton.GetComponent<RectTransform>();
+            if (skipRect != null)
+            {
+                // Set anchor to top-center
+                skipRect.anchorMin = new Vector2(0.5f, 1f);
+                skipRect.anchorMax = new Vector2(0.5f, 1f);
+
+                // Position it slightly below the top edge
+                skipRect.anchoredPosition = new Vector2(0, -50f); // 50 pixels from top
+
+                // Set a reasonable size for the button
+                skipRect.sizeDelta = new Vector2(150f, 40f);
+            }
+        }
+
+        // Connect skip button click event
+        if (_skipButtonComponent == null && _skipButton != null)
+        {
+            _skipButtonComponent = _skipButton.GetComponent<Button>();
+        }
+
+        if (_skipButtonComponent != null)
+        {
+            _skipButtonComponent.onClick.RemoveAllListeners();
+            _skipButtonComponent.onClick.AddListener(SkipTutorial);
+        }
     }
 
     private void InitializeTutorialSteps()
@@ -70,7 +122,7 @@ public class TutorialManager : MonoBehaviour
             },
             new TutorialStep
             {
-                message = "Move your mouse to aim\nNotice how your weapon follows the cursor",
+                message = "Great! Move your mouse to aim\nNotice your weapon follows the cursor",
                 requiredKey = KeyCode.None, // Mouse movement (no key required)
                 type = TutorialType.Aiming,
                 timeoutDuration = 5f
@@ -84,7 +136,7 @@ public class TutorialManager : MonoBehaviour
             },
             new TutorialStep
             {
-                message = "Press C to pick up items like vaccines and weapons\nLook for items on the ground and press C when nearby",
+                message = "Press C to pick up items\nLook for items on the ground and press C when nearby",
                 requiredKey = KeyCode.C,
                 type = TutorialType.Pickup,
                 timeoutDuration = 10f
@@ -111,10 +163,30 @@ public class TutorialManager : MonoBehaviour
         switch (currentStep.type)
         {
             case TutorialType.Movement:
-                inputDetected = Input.GetKeyDown(KeyCode.W) || Input.GetKeyDown(KeyCode.A) ||
-                               Input.GetKeyDown(KeyCode.S) || Input.GetKeyDown(KeyCode.D) ||
-                               Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.DownArrow) ||
-                               Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.RightArrow);
+                // Check for movement keys and perform limited movement
+                if (!_hasMovedThisStep)
+                {
+                    if (Input.GetKeyDown(KeyCode.W) || Input.GetKeyDown(KeyCode.UpArrow))
+                    {
+                        PerformLimitedMovement(Vector3.up);
+                        inputDetected = true;
+                    }
+                    else if (Input.GetKeyDown(KeyCode.S) || Input.GetKeyDown(KeyCode.DownArrow))
+                    {
+                        PerformLimitedMovement(Vector3.down);
+                        inputDetected = true;
+                    }
+                    else if (Input.GetKeyDown(KeyCode.A) || Input.GetKeyDown(KeyCode.LeftArrow))
+                    {
+                        PerformLimitedMovement(Vector3.left);
+                        inputDetected = true;
+                    }
+                    else if (Input.GetKeyDown(KeyCode.D) || Input.GetKeyDown(KeyCode.RightArrow))
+                    {
+                        PerformLimitedMovement(Vector3.right);
+                        inputDetected = true;
+                    }
+                }
                 break;
 
             case TutorialType.Aiming:
@@ -123,7 +195,12 @@ public class TutorialManager : MonoBehaviour
                 break;
 
             case TutorialType.Shooting:
-                inputDetected = Input.GetMouseButtonDown(0);
+                // Fire a single shot when clicked
+                if (!_hasFiredThisStep && Input.GetMouseButtonDown(0))
+                {
+                    FireSingleTutorialShot();
+                    inputDetected = true;
+                }
                 break;
 
             case TutorialType.Pickup:
@@ -137,14 +214,73 @@ public class TutorialManager : MonoBehaviour
 
         if (inputDetected)
         {
-            NextStep();
+            // Add a small delay before moving to next step for better feedback
+            StartCoroutine(DelayedNextStep(0.5f));
         }
+    }
+
+    private void PerformLimitedMovement(Vector3 direction)
+    {
+        if (_player == null || _hasMovedThisStep) return;
+
+        _hasMovedThisStep = true;
+
+        if (_limitedMoveCoroutine != null)
+            StopCoroutine(_limitedMoveCoroutine);
+
+        _limitedMoveCoroutine = StartCoroutine(MovePlayerLimited(direction));
+    }
+
+    private IEnumerator MovePlayerLimited(Vector3 direction)
+    {
+        Vector3 startPos = _player.transform.position;
+        Vector3 endPos = startPos + (direction * _tutorialMoveDistance);
+        float elapsedTime = 0f;
+
+        // Smoothly move the player a short distance
+        while (elapsedTime < _tutorialMoveTime)
+        {
+            _player.transform.position = Vector3.Lerp(startPos, endPos, elapsedTime / _tutorialMoveTime);
+            elapsedTime += Time.deltaTime;
+            yield return null;
+        }
+
+        _player.transform.position = endPos;
+        Debug.Log("Tutorial: Player moved " + direction);
+    }
+
+    private void FireSingleTutorialShot()
+    {
+        if (_player == null || _hasFiredThisStep) return;
+
+        _hasFiredThisStep = true;
+
+        // Get the Player component and call the fire demo method
+        Player playerScript = _player.GetComponent<Player>();
+        if (playerScript != null)
+        {
+            playerScript.FireTutorialShot();
+            Debug.Log("Tutorial: Single shot fired!");
+        }
+    }
+
+    private IEnumerator DelayedNextStep(float delay)
+    {
+        _waitingForInput = false; // Prevent additional input
+        yield return new WaitForSeconds(delay);
+        NextStep();
     }
 
     public void StartTutorial()
     {
         _tutorialActive = true;
         _currentStepIndex = 0;
+
+        // Store player start position
+        if (_player != null)
+        {
+            _playerStartPosition = _player.transform.position;
+        }
 
         // Pause the game timer during tutorial
         if (_gameTimer != null)
@@ -154,7 +290,11 @@ public class TutorialManager : MonoBehaviour
         if (_tutorialPanel != null)
             _tutorialPanel.SetActive(true);
 
-        // Disable player initially for movement tutorial
+        // Show skip button
+        if (_skipButton != null)
+            _skipButton.SetActive(true);
+
+        // Disable player controls initially
         if (_player != null)
             _player.enabled = false;
 
@@ -171,13 +311,44 @@ public class TutorialManager : MonoBehaviour
 
         TutorialStep currentStep = _tutorialSteps[_currentStepIndex];
 
+        // Reset step-specific flags
+        _hasMovedThisStep = false;
+        _hasFiredThisStep = false;
+        _isMovementStep = false;
+        _isShootingStep = false;
+
         // Update UI text
         if (_tutorialText != null)
             _tutorialText.text = currentStep.message;
 
-        // Enable player for movement step
-        if (currentStep.type == TutorialType.Movement && _player != null)
-            _player.enabled = true;
+        // Set flags for specific tutorial steps
+        if (_player != null)
+        {
+            switch (currentStep.type)
+            {
+                case TutorialType.Movement:
+                    _isMovementStep = true;
+                    // Restrict player movement
+                    _player.enabled = false;
+                    break;
+                case TutorialType.Aiming:
+                    // Enable player for mouse aiming
+                    _player.enabled = true;
+                    break;
+                case TutorialType.Shooting:
+                    _isShootingStep = true;
+                    // Enable player for shooting
+                    _player.enabled = true;
+                    break;
+                case TutorialType.Pickup:
+                    // Enable player for pickup
+                    _player.enabled = true;
+                    break;
+                default:
+                    _player.enabled = false;
+                    break;
+            }
+        }
 
         _waitingForInput = true;
 
@@ -194,9 +365,9 @@ public class TutorialManager : MonoBehaviour
     {
         yield return new WaitForSeconds(duration);
 
-        if (_waitingForInput) // Still waiting for input
+        if (_waitingForInput)
         {
-            NextStep(); // Auto-advance
+            NextStep();
         }
     }
 
@@ -208,6 +379,12 @@ public class TutorialManager : MonoBehaviour
         {
             StopCoroutine(_timeoutCoroutine);
             _timeoutCoroutine = null;
+        }
+
+        if (_limitedMoveCoroutine != null)
+        {
+            StopCoroutine(_limitedMoveCoroutine);
+            _limitedMoveCoroutine = null;
         }
 
         _currentStepIndex++;
@@ -234,11 +411,28 @@ public class TutorialManager : MonoBehaviour
         _tutorialActive = false;
         _waitingForInput = false;
 
+        // Stop any running coroutines
+        if (_timeoutCoroutine != null)
+        {
+            StopCoroutine(_timeoutCoroutine);
+            _timeoutCoroutine = null;
+        }
+
+        if (_limitedMoveCoroutine != null)
+        {
+            StopCoroutine(_limitedMoveCoroutine);
+            _limitedMoveCoroutine = null;
+        }
+
         // Hide tutorial UI
         if (_tutorialPanel != null)
             _tutorialPanel.SetActive(false);
 
-        // Enable player if not already enabled
+        // Hide skip button
+        if (_skipButton != null)
+            _skipButton.SetActive(false);
+
+        // Enable player fully
         if (_player != null)
             _player.enabled = true;
 
@@ -256,13 +450,39 @@ public class TutorialManager : MonoBehaviour
     {
         if (_tutorialActive)
         {
+            Debug.Log("Tutorial skipped by user");
             CompleteTutorial();
         }
     }
 
-    // Public method to check if tutorial is running (for other systems)
+    // Public methods to check tutorial state for specific steps
     public bool IsTutorialActive()
     {
         return _tutorialActive;
+    }
+
+    public bool IsInMovementTutorial()
+    {
+        return _tutorialActive && _isMovementStep;
+    }
+
+    public bool IsInShootingTutorial()
+    {
+        return _tutorialActive && _isShootingStep;
+    }
+
+    public bool ShouldBlockPlayerInput()
+    {
+        // Only block player input during movement tutorial
+        return _tutorialActive && _isMovementStep;
+    }
+
+    private void OnDestroy()
+    {
+        // Clean up button listener
+        if (_skipButtonComponent != null)
+        {
+            _skipButtonComponent.onClick.RemoveListener(SkipTutorial);
+        }
     }
 }

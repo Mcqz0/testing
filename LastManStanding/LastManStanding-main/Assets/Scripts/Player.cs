@@ -38,8 +38,9 @@ public class Player : LivingEntity
     {
         base.Start();
         _mainCamera = Camera.main;
-        _gameController = FindFirstObjectByType<GameController>(); // Updated API
-        _tutorialManager = FindFirstObjectByType<TutorialManager>(); // Updated API
+
+        _gameController = FindObjectOfType<GameController>();
+        _tutorialManager = FindObjectOfType<TutorialManager>();
 
         // Initialize weapons
         if (_weapons != null && _weapons.Length > 0)
@@ -63,9 +64,12 @@ public class Player : LivingEntity
 
     private void Update()
     {
-        // Check if game is paused or tutorial is active - if so, don't process input
-        if ((_gameController != null && _gameController.IsPaused) ||
-            (_tutorialManager != null && _tutorialManager.IsTutorialActive()))
+        // Check if game is paused - if so, don't process input
+        if (_gameController != null && _gameController.IsPaused)
+            return;
+
+        // Only block input if tutorial specifically needs to block it
+        if (_tutorialManager != null && _tutorialManager.ShouldBlockPlayerInput())
             return;
 
         HandleMovementInput();
@@ -421,6 +425,47 @@ public class Player : LivingEntity
     {
         _spriteRenderer.color = _isInfected ? InfectedTint : Color.white;
     }
+
+    public void FireTutorialShot()
+    {
+        // Fire shot for tutorial purposes
+        if (_weapons != null && _weapons.Length > 0)
+        {
+            WeaponData weapon = CurrentWeapon;
+
+            // Spawn bullet/projectile
+            if (weapon.BulletPrefab != null && weapon.GunRenderer != null)
+            {
+                // Get current aim direction
+                Vector2 shootDirection = weapon.GunRenderer.transform.right;
+
+                Vector3 spawnPos = weapon.MuzzleRenderer != null ?
+                    weapon.MuzzleRenderer.transform.position :
+                    weapon.GunRenderer.transform.position;
+
+                Bullet bullet = Instantiate(weapon.BulletPrefab, spawnPos, Quaternion.identity);
+                bullet.Initialize(shootDirection);
+            }
+
+            // Muzzle flash (only for firearms)
+            if (weapon.IsFirearm && weapon.MuzzleRenderer != null)
+            {
+                StartCoroutine(ShowMuzzleFlash(weapon.MuzzleRenderer));
+            }
+
+            // Play sound effect
+            if (weapon.Sfx != null)
+            {
+                _audioSource.PlayOneShot(weapon.Sfx, Random.Range(0.08f, 0.12f));
+            }
+
+            Debug.Log("Tutorial shot fired!");
+        }
+    }
+
+    // Alternative: If you want to prevent multiple shots during the shooting tutorial,
+    // you can add this property and check it in your HandleFiring method:
+    public bool IsTutorialShotMode { get; set; } = false;
 
     [Serializable]
     public struct WeaponData
