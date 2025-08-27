@@ -16,11 +16,14 @@ public class Zombie : LivingEntity
     private Player _player;
     private AIPath _aiPath;
     private float _lastSearchPathTime;
+    private TutorialManager _tutorialManager;
 
     protected override void Start()
     {
         base.Start();
         _aiPath = GetComponent<AIPath>();
+        _tutorialManager = FindFirstObjectByType<TutorialManager>();
+
         var playerObj = GameObject.FindGameObjectWithTag("Player");
         if (playerObj != null)
             _player = playerObj.GetComponent<Player>();
@@ -28,6 +31,25 @@ public class Zombie : LivingEntity
 
     private void FixedUpdate()
     {
+        // Stop all zombie activity during tutorial
+        if (_tutorialManager != null && _tutorialManager.IsTutorialActive())
+        {
+            // Disable AI movement during tutorial
+            if (_aiPath != null)
+            {
+                _aiPath.canMove = false;
+                _aiPath.canSearch = false;
+            }
+            return;
+        }
+
+        // Re-enable AI movement after tutorial
+        if (_aiPath != null && (!_aiPath.canMove || !_aiPath.canSearch))
+        {
+            _aiPath.canMove = true;
+            _aiPath.canSearch = true;
+        }
+
         if (_player == null) return;
 
         // Update destination toward player
@@ -51,9 +73,14 @@ public class Zombie : LivingEntity
         }
     }
 
-
     private void OnCollisionEnter2D(Collision2D collision)
     {
+        // Don't damage player during tutorial
+        if (_tutorialManager != null && _tutorialManager.IsTutorialActive())
+        {
+            return;
+        }
+
         var player = collision.gameObject.GetComponent<Player>();
         if (player != null)
         {
@@ -85,6 +112,12 @@ public class Zombie : LivingEntity
 
     public void KnockBack(Vector2 direction, float force, float duration = 1f)
     {
+        // Don't knockback during tutorial
+        if (_tutorialManager != null && _tutorialManager.IsTutorialActive())
+        {
+            return;
+        }
+
         _aiPath.canMove = false;
         _aiPath.canSearch = false;
 
