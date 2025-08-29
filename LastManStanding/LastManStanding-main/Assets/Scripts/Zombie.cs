@@ -12,6 +12,9 @@ public class Zombie : LivingEntity
     [SerializeField] private AudioSource _audioSource;
     [SerializeField] private AudioClip _hitFlesh;
     [SerializeField] private AudioClip _deathSfx;
+    [SerializeField] private AudioClip _infectionSound;
+    [SerializeField] private AudioClip _vaccinePickupSound;
+    [SerializeField] private AudioClip _weaponPickupSound;
 
     private Player _player;
     private AIPath _aiPath;
@@ -61,11 +64,10 @@ public class Zombie : LivingEntity
             _lastSearchPathTime = Time.time;
         }
 
-        // Flip sprite based on movement direction instead of target direction
+        // Flip sprite based on movement direction
         Vector2 velocity = _aiPath.velocity;
-        if (velocity.sqrMagnitude > 0.1f) // prevent jitter when nearly idle
+        if (velocity.sqrMagnitude > 0.1f)
         {
-            // Only flip if horizontal movement dominates
             if (Mathf.Abs(velocity.x) > Mathf.Abs(velocity.y))
             {
                 _spriteRenderer.flipX = velocity.x < 0;
@@ -94,14 +96,24 @@ public class Zombie : LivingEntity
             Debug.Log("Zombie hit player!");
         }
     }
-
     public override void TakeDamage(int damage)
     {
+        // Check if tutorial is active - if not, take damage normally
+        if (_tutorialManager != null && _tutorialManager.IsTutorialActive())
+        {
+            // Play hit sound but don't take damage during tutorial
+            if (!_audioSource.isPlaying && _hitFlesh != null)
+                _audioSource.PlayOneShot(_hitFlesh, Random.Range(0.8f, 1f));
+
+            Debug.Log("Zombie is invincible during tutorial!");
+            return;
+        }
+
+        // Normal damage processing after tutorial
         base.TakeDamage(damage);
-        if (!_audioSource.isPlaying)
+        if (!_audioSource.isPlaying && _hitFlesh != null)
             _audioSource.PlayOneShot(_hitFlesh, Random.Range(0.8f, 1f));
     }
-
     protected override void Die()
     {
         _audioSource.PlayOneShot(_deathSfx, Random.Range(1.6f, 2f));
